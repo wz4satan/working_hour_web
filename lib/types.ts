@@ -3,6 +3,8 @@ export type WorkEntry = {
   startTime: string;
   endTime: string;
   actualStartTime: string;
+  secondStartTime: string;
+  secondEndTime: string;
   lunchBreakHours: number;
   isRestDay: boolean;
   note: string;
@@ -17,7 +19,7 @@ export type WeeklyPayRecord = {
 };
 
 export type AppData = {
-  version: 1;
+  version: 2;
   entries: Record<string, WorkEntry>;
   payRecords: Record<string, WeeklyPayRecord>;
   settings: {
@@ -27,7 +29,7 @@ export type AppData = {
 };
 
 export const EMPTY_DATA: AppData = {
-  version: 1,
+  version: 2,
   entries: {},
   payRecords: {},
   settings: { defaultHourlyRate: 20, currencyCode: "NZD" },
@@ -69,6 +71,8 @@ export function emptyEntry(date: string): WorkEntry {
     startTime: "09:00",
     endTime: "17:00",
     actualStartTime: "",
+    secondStartTime: "",
+    secondEndTime: "",
     lunchBreakHours: 0.5,
     isRestDay: false,
     note: "",
@@ -92,13 +96,52 @@ function minutes(value: string): number | null {
   return hour * 60 + minute;
 }
 
-export function duration(entry: WorkEntry | undefined): number {
-  if (!entry || entry.isRestDay) return 0;
-  const start = minutes(entry.actualStartTime || entry.startTime);
-  const end = minutes(entry.endTime);
+export type DurationResult = {
+  valid: boolean;
+  rawHours: number;
+  hours: number;
+  message: string;
+};
+
+function pairIssue(start: string, end: string, label: string): string {
+  if (start && !end) return `请补全${label}下工时间`;
+  if (!start && end) return `请补全${label}上工时间`;
+  return "";
+}
+
+function pairHours(startValue: string, endValue: string): number {
+  const start = minutes(startValue);
+  const end = minutes(endValue);
   if (start === null || end === null) return 0;
-  const elapsed = (end < start ? end + 24 * 60 : end) - start;
-  return Math.max(0, elapsed / 60 - Math.max(0, entry.lunchBreakHours || 0));
+  return ((end < start ? end + 24 * 60 : end) - start) / 60;
+}
+
+export function durationResult(entry: WorkEntry | undefined): DurationResult {
+  if (!entry) return { valid: true, rawHours: 0, hours: 0, message: "" };
+
+  const firstStart = entry.actualStartTime || entry.startTime;
+  const secondStart = entry.secondStartTime || "";
+  const secondEnd = entry.secondEndTime || "";
+  const firstIssue = pairIssue(firstStart, entry.endTime, "第一段");
+  const secondIssue = pairIssue(secondStart, secondEnd, "第二段");
+  const message = firstIssue || secondIssue;
+  if (message) return { valid: false, rawHours: 0, hours: 0, message };
+
+  const firstComplete = Boolean(firstStart && entry.endTime);
+  const secondComplete = Boolean(secondStart && secondEnd);
+  if (entry.isRestDay && !firstComplete && !secondComplete) {
+    return { valid: true, rawHours: 0, hours: 0, message: "" };
+  }
+
+  const rawHours = (firstComplete ? pairHours(firstStart, entry.endTime) : 0)
+    + (secondComplete ? pairHours(secondStart, secondEnd) : 0);
+  const hours = Math.max(0, rawHours - Math.max(0, Number(entry.lunchBreakHours) || 0));
+  return { valid: true, rawHours, hours, message: "" };
+}
+
+export function duration(entry: WorkEntry | undefined): number {
+  const result = durationResult(entry);
+  return result.valid ? result.hours : 0;
 }
 
 export function roundMoney(value: number): number {

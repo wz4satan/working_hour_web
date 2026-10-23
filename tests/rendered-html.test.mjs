@@ -33,8 +33,11 @@ test("ships local persistence, backup, offline and Excel capabilities", async ()
   assert.match(app, /导出 Excel 周报/);
   assert.match(app, /导出 JSON备份/);
   assert.match(app, /navigator\.share/);
+  assert.match(app, /第二段上工时间/);
+  assert.match(app, /durationResult/);
   assert.match(excel, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
-  assert.match(excel, /SUM\(F4:F10\)/);
+  assert.match(excel, /SUM\(H4:H10\)/);
+  assert.match(excel, /第二段上工/);
   assert.equal(JSON.parse(manifest).display, "standalone");
   assert.match(worker, /CACHE_NAME/);
 });

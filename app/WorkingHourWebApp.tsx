@@ -2,6 +2,7 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { downloadBlob, excelFile } from "@/lib/excel";
+import { weeklyNotesText } from "@/lib/report";
 import { loadData, normalizeData, saveData } from "@/lib/storage";
 import {
   AppData,
@@ -9,7 +10,7 @@ import {
   WorkEntry,
   addDays,
   dateKey,
-  duration,
+  durationResult,
   emptyEntry,
   emptyPayRecord,
   formatDate,
@@ -69,20 +70,30 @@ export default function WorkingHourWebApp() {
   const weekStart = weekStartKey(selectedWeekDate);
   const weekDays = weekKeys(selectedWeekDate);
   const weekEntries = weekDays.map((day) => appData.entries[day]);
-  const totalHours = weekEntries.reduce((sum, item) => sum + duration(item), 0);
+  const weekResults = weekEntries.map((item) => durationResult(item));
+  const invalidDayIndex = weekResults.findIndex((result) => !result.valid);
+  const weekValid = invalidDayIndex === -1;
+  const totalHours = weekValid ? weekResults.reduce((sum, result) => sum + result.hours, 0) : null;
   const payRecord = appData.payRecords[weekStart] ?? emptyPayRecord(weekStart, appData.settings.defaultHourlyRate);
-  const estimatedPay = roundMoney(totalHours * payRecord.hourlyRate);
+  const estimatedPay = totalHours === null ? null : roundMoney(totalHours * payRecord.hourlyRate);
   const actualPaid = roundMoney(payRecord.bankTransferAmount + payRecord.cashAmount);
-  const difference = roundMoney(estimatedPay - actualPaid);
-  const recordedDays = weekEntries.filter((item) => duration(item) > 0).length;
+  const difference = estimatedPay === null ? null : roundMoney(estimatedPay - actualPaid);
+  const recordedDays = weekResults.filter((result) => result.valid && result.hours > 0).length;
+  const entryResult = durationResult(entry);
 
   function saveEntry() {
-    if (!entry.isRestDay && (!entry.startTime || !entry.endTime)) {
-      setNotice("请填写上工和下工时间");
+    const result = durationResult(entry);
+    if (!result.valid) {
+      setNotice(result.message);
       return;
     }
     const next = clone(appData);
-    next.entries[selectedDate] = { ...entry, date: selectedDate, lunchBreakHours: Math.max(0, Number(entry.lunchBreakHours) || 0) };
+    next.entries[selectedDate] = {
+      ...entry,
+      date: selectedDate,
+      isRestDay: result.rawHours > 0 ? false : entry.isRestDay,
+      lunchBreakHours: Math.max(0, Number(entry.lunchBreakHours) || 0),
+    };
     commit(next, "今日记录已保存");
   }
 
@@ -111,32 +122,17 @@ export default function WorkingHourWebApp() {
     }
   }
 
-  function notesText(): string {
-    const lines = ["每周上工记录", `${formatDate(weekStart)}—${formatDate(addDays(weekStart, 6))}`, ""];
-    weekDays.forEach((day) => {
-      const item = appData.entries[day];
-      const prefix = `${weekday(day)} ${formatDate(day)}：`;
-      if (!item) lines.push(prefix + "未记录");
-      else if (item.isRestDay) lines.push(prefix + "休息");
-      else if (!item.startTime || !item.endTime) lines.push(prefix + "未记录");
-      else {
-        const start = item.actualStartTime || item.startTime;
-        const overnight = item.endTime < start ? "（次日）" : "";
-        lines.push(`${prefix}${start}—${item.endTime}${overnight}`);
-      }
-    });
-    return lines.join("\n");
-  }
-
-  async function exportExcel() {
-    const output = excelFile(appData, selectedWeekDate);
-    const file = new File([output.blob], output.fileName, { type: output.blob.type });
+  function exportExcel() {
+    if (!weekValid) {
+      setNotice(`${weekday(weekDays[invalidDayIndex])}：${weekResults[invalidDayIndex].message}`);
+      return;
+    }
     try {
-      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: "工时周报" });
-      else downloadBlob(output.blob, output.fileName);
-      setNotice("Excel 周报已生成");
-    } catch (error) {
-      if ((error as DOMException).name !== "AbortError") setNotice("Excel 导出没有完成");
+      const output = excelFile(appData, selectedWeekDate);
+      downloadBlob(output.blob, output.fileName);
+      setNotice("Excel 周报已下载，可在“文件”中查看");
+    } catch {
+      setNotice("Excel 导出没有完成");
     }
   }
 
@@ -168,19 +164,21 @@ export default function WorkingHourWebApp() {
           <PageHeader eyebrow="WORKING HOUR" title="今天，按时收工。" subtitle="记录上下工，工资心里有数。" date={selectedDate} />
           <section className="panel record-panel">
             <div className="section-heading"><div><span>每日记录</span><strong>{weekday(selectedDate)}</strong></div><input aria-label="记录日期" type="date" value={selectedDate} onChange={(event) => { const value = event.target.value; setSelectedDate(value); setEntry(clone(appData.entries[value] ?? emptyEntry(value))); }} /></div>
-            <div className="toggle-row"><span><b>休息日</b><small>当天不计算工时</small></span><input aria-label="休息日" type="checkbox" checked={entry.isRestDay} onChange={(event) => setEntry({ ...entry, isRestDay: event.target.checked })} /></div>
+            <div className="toggle-row"><span><b>休息日</b><small>当天不计算工时</small></span><input aria-label="休息日" type="checkbox" checked={entry.isRestDay} onChange={(event) => setEntry(event.target.checked ? { ...entry, isRestDay: true, startTime: "", endTime: "", actualStartTime: "", secondStartTime: "", secondEndTime: "" } : { ...entry, isRestDay: false })} /></div>
             {!entry.isRestDay && (
               <>
                 <div className="time-fields">
-                  <Field label="上工时间"><input type="time" value={entry.startTime} onChange={(event) => setEntry({ ...entry, startTime: event.target.value })} /></Field>
-                  <Field label="下工时间"><input type="time" value={entry.endTime} onChange={(event) => setEntry({ ...entry, endTime: event.target.value })} /></Field>
+                  <Field label="上工时间"><input aria-label="第一段上工时间" type="time" value={entry.startTime} onChange={(event) => setEntry({ ...entry, startTime: event.target.value })} /></Field>
+                  <Field label="下工时间"><input aria-label="第一段下工时间" type="time" value={entry.endTime} onChange={(event) => setEntry({ ...entry, endTime: event.target.value })} /></Field>
+                  <Field label="第二段上工时间" hint="可选"><input aria-label="第二段上工时间" type="time" value={entry.secondStartTime} onChange={(event) => setEntry({ ...entry, secondStartTime: event.target.value })} /></Field>
+                  <Field label="第二段下工时间" hint="可选"><input aria-label="第二段下工时间" type="time" value={entry.secondEndTime} onChange={(event) => setEntry({ ...entry, secondEndTime: event.target.value })} /></Field>
                 </div>
                 <Field label="实际开始时间" hint="如迟到或提前开工，可单独记录"><input type="time" value={entry.actualStartTime} onChange={(event) => setEntry({ ...entry, actualStartTime: event.target.value })} /></Field>
                 <div className="lunch-row"><div><b>午饭扣除</b><small>每次调整 0.5 小时</small></div><div className="stepper"><button aria-label="减少午饭时间" onClick={() => setEntry({ ...entry, lunchBreakHours: Math.max(0, entry.lunchBreakHours - 0.5) })}>−</button><strong>{entry.lunchBreakHours.toFixed(1)}</strong><button aria-label="增加午饭时间" onClick={() => setEntry({ ...entry, lunchBreakHours: entry.lunchBreakHours + 0.5 })}>＋</button></div></div>
               </>
             )}
             <Field label="备注" hint="可选"><textarea rows={3} value={entry.note} placeholder="例如：客户现场、夜班…" onChange={(event) => setEntry({ ...entry, note: event.target.value })} /></Field>
-            <div className="calculation-strip"><span>预计工时</span><strong>{duration(entry).toFixed(1)} 小时</strong></div>
+            <div className={`calculation-strip ${entryResult.valid ? "" : "invalid"}`}><span>{entryResult.valid ? "预计工时" : entryResult.message}</span><strong>{entryResult.valid ? `${entryResult.hours.toFixed(1)} 小时` : "待补全"}</strong></div>
             <button className="primary-button" onClick={saveEntry}>保存今日记录</button>
             {appData.entries[selectedDate] && <button className="text-button danger" onClick={deleteEntry}>删除这一天</button>}
           </section>
@@ -191,21 +189,21 @@ export default function WorkingHourWebApp() {
         <>
           <PageHeader eyebrow="WEEKLY REPORT" title="这一周，清清楚楚。" subtitle="工时、周薪和到账金额都在这里。" />
           <section className="week-selector"><button aria-label="上一周" onClick={() => setSelectedWeekDate(addDays(weekStart, -7))}>←</button><label><span>查看所在周</span><input type="date" value={selectedWeekDate} onChange={(event) => setSelectedWeekDate(event.target.value)} /></label><button aria-label="下一周" onClick={() => setSelectedWeekDate(addDays(weekStart, 7))}>→</button></section>
-          <section className="week-hero"><div><span>{formatDate(weekStart)}—{formatDate(addDays(weekStart, 6))}</span><strong>{totalHours.toFixed(1)}<small>小时</small></strong><p>{recordedDays} 个工作日</p></div><div className="pay-chip"><span>预估周薪</span><b>{money(estimatedPay)}</b></div></section>
+          <section className="week-hero"><div><span>{formatDate(weekStart)}—{formatDate(addDays(weekStart, 6))}</span><strong>{totalHours === null ? "待补全" : totalHours.toFixed(1)}{totalHours !== null && <small>小时</small>}</strong><p>{weekValid ? `${recordedDays} 个工作日` : `${weekday(weekDays[invalidDayIndex])}的时间不完整`}</p></div><div className="pay-chip"><span>预估周薪</span><b>{estimatedPay === null ? "—" : money(estimatedPay)}</b></div></section>
           <section className="panel pay-panel">
             <div className="panel-title"><span>工资记录</span><small>黄色项目可修改</small></div>
             <PayField label="时薪" value={payRecord.hourlyRate} onChange={(value) => updatePay("hourlyRate", value)} />
-            <div className="summary-line"><span>预估周薪</span><strong>{money(estimatedPay)}</strong></div>
+            <div className="summary-line"><span>预估周薪</span><strong>{estimatedPay === null ? "—" : money(estimatedPay)}</strong></div>
             <PayField label="银行到账" value={payRecord.bankTransferAmount} onChange={(value) => updatePay("bankTransferAmount", value)} />
             <PayField label="现金" value={payRecord.cashAmount} onChange={(value) => updatePay("cashAmount", value)} />
             <div className="summary-line"><span>实际合计</span><strong>{money(actualPaid)}</strong></div>
-            <div className={`summary-line difference ${difference > 0 ? "unpaid" : difference < 0 ? "overpaid" : "settled"}`}><span>差额 · {difference > 0 ? "未结清" : difference < 0 ? "多发" : "已结清"}</span><strong>{money(difference)}</strong></div>
+            <div className={`summary-line difference ${difference === null ? "" : difference > 0 ? "unpaid" : difference < 0 ? "overpaid" : "settled"}`}><span>差额 · {difference === null ? "待补全工时" : difference > 0 ? "未结清" : difference < 0 ? "多发" : "已结清"}</span><strong>{difference === null ? "—" : money(difference)}</strong></div>
             <Field label="付款备注" hint="可选"><textarea rows={2} value={payRecord.paymentNote} onChange={(event) => updatePay("paymentNote", event.target.value)} /></Field>
           </section>
-          <section className="panel week-list"><div className="panel-title"><span>每日记录</span><small>周一至周日</small></div>{weekDays.map((day) => { const item = appData.entries[day]; return <button key={day} onClick={() => { setSelectedDate(day); setEntry(clone(item ?? emptyEntry(day))); setTab("record"); }}><span><b>{weekday(day)}</b><small>{formatDate(day)}</small></span><strong>{!item ? "未记录" : item.isRestDay ? "休息" : `${duration(item).toFixed(1)} 小时`}</strong></button>; })}</section>
+          <section className="panel week-list"><div className="panel-title"><span>每日记录</span><small>周一至周日</small></div>{weekDays.map((day) => { const item = appData.entries[day]; const result = durationResult(item); const status = !item ? "未记录" : !result.valid ? "时间待补全" : item.isRestDay && result.rawHours === 0 ? "休息" : `${result.hours.toFixed(1)} 小时`; return <button key={day} onClick={() => { setSelectedDate(day); setEntry(clone(item ?? emptyEntry(day))); setTab("record"); }}><span><b>{weekday(day)}</b><small>{formatDate(day)}</small></span><strong>{status}</strong></button>; })}</section>
           <section className="export-grid">
             <button className="export-card excel" onClick={exportExcel}><span className="export-icon">X</span><b>导出 Excel 周报</b><small>Mac 上继续编辑</small></button>
-            <button className="export-card" onClick={() => shareText("每周上工记录", notesText())}><span className="export-icon">Aa</span><b>发送上工时间</b><small>适合备忘录或老板</small></button>
+            <button className="export-card" onClick={() => shareText("每周上工记录", weeklyNotesText(appData, selectedWeekDate))}><span className="export-icon">Aa</span><b>发送上工时间</b><small>适合备忘录或老板</small></button>
           </section>
         </>
       )}

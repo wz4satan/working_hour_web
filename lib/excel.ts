@@ -1,4 +1,5 @@
-import { AppData, WorkEntry, addDays, dateFromKey, duration, formatDate, roundMoney, weekKeys, weekStartKey } from "./types";
+import { addDays, dateFromKey, duration, durationResult, formatDate, roundMoney, weekKeys, weekStartKey } from "./types.ts";
+import type { AppData, WorkEntry } from "./types.ts";
 
 const encoder = new TextEncoder();
 
@@ -51,6 +52,8 @@ function buildSheet(data: AppData, selectedDate: string): string {
     paymentNote: "",
   };
   const entries = days.map((day) => data.entries[day]);
+  const invalidEntry = entries.find((entry) => !durationResult(entry).valid);
+  if (invalidEntry) throw new Error(`${invalidEntry.date}：${durationResult(invalidEntry).message}`);
   const totalHours = entries.reduce((sum, entry) => sum + duration(entry), 0);
   const estimated = roundMoney(totalHours * pay.hourlyRate);
   const actual = roundMoney(pay.bankTransferAmount + pay.cashAmount);
@@ -58,7 +61,7 @@ function buildSheet(data: AppData, selectedDate: string): string {
   const rows = [
     row(1, 28, [inlineCell("A1", "工时周报", 1)]),
     row(2, 22, [inlineCell("A2", `周期：${formatDate(start, { year: "numeric", month: "long", day: "numeric" })}—${formatDate(addDays(start, 6), { year: "numeric", month: "long", day: "numeric" })}`, 2)]),
-    row(3, 32, ["日期", "星期", "上工时间", "下工时间", "午饭扣除（小时）", "工作时长（小时）", "备注"].map((title, index) => inlineCell(`${String.fromCharCode(65 + index)}3`, title, 3))),
+    row(3, 32, ["日期", "星期", "第一段上工", "第一段下工", "第二段上工", "第二段下工", "午饭扣除（小时）", "每日工时（小时）", "备注"].map((title, index) => inlineCell(`${String.fromCharCode(65 + index)}3`, title, 3))),
   ];
 
   days.forEach((day, offset) => {
@@ -69,16 +72,18 @@ function buildSheet(data: AppData, selectedDate: string): string {
       const startTime = entry.actualStartTime || entry.startTime;
       if (startTime) cells.push(numberCell(`C${excelRow}`, excelTime(startTime), 5));
       if (entry.endTime) cells.push(numberCell(`D${excelRow}`, excelTime(entry.endTime), 5));
-      cells.push(numberCell(`E${excelRow}`, entry.lunchBreakHours, 12));
+      if (entry.secondStartTime) cells.push(numberCell(`E${excelRow}`, excelTime(entry.secondStartTime), 5));
+      if (entry.secondEndTime) cells.push(numberCell(`F${excelRow}`, excelTime(entry.secondEndTime), 5));
+      cells.push(numberCell(`G${excelRow}`, entry.lunchBreakHours, 12));
     }
-    cells.push(formulaCell(`F${excelRow}`, `IF(OR(C${excelRow}="",D${excelRow}=""),0,MAX(0,MOD(D${excelRow}-C${excelRow},1)*24-E${excelRow}))`, duration(entry), 6));
+    cells.push(formulaCell(`H${excelRow}`, `MAX(0,IF(AND(C${excelRow}<>"",D${excelRow}<>""),MOD(D${excelRow}-C${excelRow},1)*24,0)+IF(AND(E${excelRow}<>"",F${excelRow}<>""),MOD(F${excelRow}-E${excelRow},1)*24,0)-G${excelRow})`, duration(entry), 6));
     const note = entry?.isRestDay ? (entry.note ? `休息；${entry.note}` : "休息") : (entry?.note ?? "");
-    if (note) cells.push(inlineCell(`G${excelRow}`, note, 9));
+    if (note) cells.push(inlineCell(`I${excelRow}`, note, 9));
     rows.push(row(excelRow, 21, cells));
   });
 
   rows.push(row(11, 8, []));
-  rows.push(summaryRow(12, "本周总工时", formulaCell("B12", "SUM(F4:F10)", totalHours, 6)));
+  rows.push(summaryRow(12, "本周总工时", formulaCell("B12", "SUM(H4:H10)", totalHours, 6)));
   rows.push(summaryRow(13, "时薪", numberCell("B13", pay.hourlyRate, 11), true));
   rows.push(summaryRow(14, "预估周薪", formulaCell("B14", "B12*B13", estimated, 8), true));
   rows.push(summaryRow(15, "银行到账", numberCell("B15", pay.bankTransferAmount, 11), true));
@@ -88,7 +93,7 @@ function buildSheet(data: AppData, selectedDate: string): string {
   rows.push(row(19, 25, [inlineCell("A19", "付款备注", 7), inlineCell("B19", pay.paymentNote, 13)]));
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:G19"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="12" customWidth="1"/><col min="3" max="4" width="11" customWidth="1"/><col min="5" max="6" width="16" customWidth="1"/><col min="7" max="7" width="22" customWidth="1"/></cols><sheetData>${rows.join("")}</sheetData><autoFilter ref="A3:G10"/><mergeCells count="3"><mergeCell ref="A1:G1"/><mergeCell ref="A2:G2"/><mergeCell ref="B19:G19"/></mergeCells><pageMargins left="0.35" right="0.35" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:I19"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="12" customWidth="1"/><col min="2" max="2" width="10" customWidth="1"/><col min="3" max="6" width="12" customWidth="1"/><col min="7" max="8" width="16" customWidth="1"/><col min="9" max="9" width="22" customWidth="1"/></cols><sheetData>${rows.join("")}</sheetData><autoFilter ref="A3:I10"/><mergeCells count="3"><mergeCell ref="A1:I1"/><mergeCell ref="A2:I2"/><mergeCell ref="B19:I19"/></mergeCells><pageMargins left="0.35" right="0.35" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`;
 }
 
 const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;

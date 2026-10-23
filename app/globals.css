@@ -42,6 +42,9 @@ h1 { margin:0; max-width:340px; font-size:clamp(2rem,9vw,2.65rem); line-height:1
 .stepper strong { text-align:center; font-size:.9rem; }
 .calculation-strip { display:flex; justify-content:space-between; align-items:center; margin:16px 0; padding:14px 15px; border-radius:15px; color:#dcece7; background:var(--ink); }
 .calculation-strip span { font-size:.78rem; }
+.calculation-strip.invalid { gap:12px; background:var(--danger); }
+.calculation-strip.invalid span { line-height:1.35; }
+.calculation-strip.invalid strong { flex:0 0 auto; }
 .primary-button,.secondary-button { width:100%; min-height:52px; border:0; border-radius:17px; display:flex; align-items:center; justify-content:center; color:var(--ink); background:var(--mint); font-weight:800; text-align:center; }
 .primary-button:active,.secondary-button:active,.export-card:active { transform:translateY(1px); filter:brightness(.97); }
 .text-button { width:100%; border:0; padding:14px; color:var(--mint-dark); background:transparent; font-weight:700; }

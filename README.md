@@ -4,7 +4,8 @@
 
 ## 功能
 
-- 每日上下工、实际开始时间、午饭扣除、休息日和备注
+- 每天可记录两段独立上下工时间，两段均支持跨午夜；午饭只在合计后扣除一次
+- 实际开始时间、休息日、备注和不完整时间校验
 - 自然周工时、时薪、预估周薪、银行到账、现金和差额
 - 导出可编辑的 Excel 周报
 - 分享每周原始上下工时间
@@ -22,10 +23,22 @@ npm run dev
 
 浏览器打开 `http://localhost:3000`。
 
+如需预览与 Cloudflare Pages 实际发布内容一致的生产构建，请运行：
+
+```bash
+npm run build:pages
+npm run preview:pages
+```
+
+然后打开 `http://127.0.0.1:4173/`。按 `Ctrl+C` 可结束预览服务。
+
 ## 验证
 
 ```bash
 npm test
+npm run typecheck
+npm run lint
+npm run build:pages
 ```
 
 ## 上传 GitHub
